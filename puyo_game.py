@@ -31,6 +31,7 @@ clock = pygame.time.Clock()
 
 # Game board grid (None or color)
 grid = [[None for _ in range(COLUMNS)] for _ in range(ROWS)]
+particles = []
 
 def draw_grid():
     for row in range(ROWS):
