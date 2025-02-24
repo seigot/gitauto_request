@@ -49,6 +49,90 @@ for row in range(BRICK_ROWS):
         brick_row.append(brick)
     bricks.append(brick_row)
 
+## Initialize score and font
+score = 0
+pygame.font.init()
+font = pygame.font.SysFont('Arial', 24)
+
+def reset_bricks():
+    global bricks
+    bricks = []
+    offset_left = (WIDTH - (BRICK_COLUMNS * (BRICK_WIDTH + brick_padding))) // 2
+    for row in range(BRICK_ROWS):
+        brick_row = []
+        for col in range(BRICK_COLUMNS):
+            brick_x = offset_left + col * (BRICK_WIDTH + brick_padding)
+            brick_y = offset_top + row * (BRICK_HEIGHT + brick_padding)
+            brick_row.append(pygame.Rect(brick_x, brick_y, BRICK_WIDTH, BRICK_HEIGHT))
+        bricks.append(brick_row)
+
+# Main game loop
+running = True
+while running:
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+    # Automated paddle movement: move paddle towards ball's x position
+    if ball.centerx < paddle.centerx:
+        paddle.x -= 5
+    elif ball.centerx > paddle.centerx:
+        paddle.x += 5
+
+    # Ball movement
+    ball.x += ball_vel[0]
+    ball.y += ball_vel[1]
+
+    # Collision with walls
+    if ball.left <= 0 or ball.right >= WIDTH:
+        ball_vel[0] *= -1
+    if ball.top <= 0:
+        ball_vel[1] *= -1
+    if ball.colliderect(paddle):
+        ball_vel[1] = -abs(ball_vel[1])
+
+    # Collision with bricks
+    hit_brick = False
+    for row in bricks:
+        for brick in row:
+            if brick and ball.colliderect(brick):
+                ball_vel[1] *= -1
+                row[row.index(brick)] = None
+                score += 100
+                hit_brick = True
+                break
+        if hit_brick:
+            break
+
+    # Remove None bricks
+    bricks = [[brick for brick in row if brick is not None] for row in bricks]
+    if all(len(row) == 0 for row in bricks):
+        score += 1000
+        reset_bricks()
+
+    # Clear screen
+    screen.fill(BLACK)
+
+    # Draw bricks
+    for row in bricks:
+        for brick in row:
+            pygame.draw.rect(screen, RED, brick)
+
+    # Draw paddle
+    pygame.draw.rect(screen, BLUE, paddle)
+
+    # Draw ball
+    pygame.draw.ellipse(screen, YELLOW, ball)
+
+    # Render score
+    score_text = font.render('Score: ' + str(score), True, WHITE)
+    screen.blit(score_text, (10, 10))
+
+    pygame.display.flip()
+    clock.tick(FPS)
+
+pygame.quit()
+sys.exit()
 # Particle effects list
 particles = []
 
