@@ -97,6 +97,7 @@ while running:
         for brick in row:
             if brick and ball.colliderect(brick):
                 ball_vel[1] *= -1
+                create_particles(brick.centerx, brick.centery)
                 row[row.index(brick)] = None
                 score += 100
                 hit_brick = True
