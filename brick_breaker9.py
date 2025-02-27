@@ -54,6 +54,16 @@ bricks = create_bricks()
 score = 0
 pygame.font.init()
 font = pygame.font.SysFont('Arial', 24)
+## 弾の管理
+bullets = []
+def update_bullets():
+    for bullet in bullets[:]:
+        bullet.y += -8
+        if bullet.bottom < 0:
+            bullets.remove(bullet)
+def draw_bullets(screen):
+    for bullet in bullets:
+        pygame.draw.rect(screen, YELLOW, bullet)
 
 # パーティクル管理
 particles = []
@@ -112,6 +122,10 @@ while running:
     clock.tick(FPS)
 
     for event in pygame.event.get():
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_SPACE:
+                new_bullet = pygame.Rect(paddle.centerx - 2, paddle.top - 10, 5, 10)
+                bullets.append(new_bullet)
         if event.type == pygame.QUIT:
             running = False
 
@@ -146,6 +160,16 @@ while running:
 
     # 画面下まで落ちたら終了
     if ball.bottom > HEIGHT:
+    update_bullets()
+    # 弾とブロックの衝突判定
+    for bullet in bullets[:]:
+        hit = False
+        for row in bricks:
+            for brick in row:
+                if bullet.colliderect(brick):
+                    create_particles(brick.centerx, brick.centery)
+                    create_broken_brick_effect(brick)
+                    row.remove(brick); score += 100; hit = True; break
         running = False
 
     # 壁衝突後に横速度が 0 に近ければ微調整（真上・真下防止）
@@ -187,6 +211,7 @@ while running:
                 row.remove(brick)
                 score += 100
                 hit_brick = True
+    draw_bullets(screen)
                 break
         if hit_brick:
             break
