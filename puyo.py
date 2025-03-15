@@ -83,15 +83,23 @@ class Puyo:
         self.falling = True
         self.connected = False
         self.checked = False
+        self.visual_y = y  # 表示上の位置
+        self.target_y = y  # 目標位置
 
+    def update(self, dt):
+        # 視覚的な位置を目標位置に近づける
+        if self.visual_y < self.target_y:
+            self.visual_y = min(self.target_y, self.visual_y + dt * 10)  # 落下速度を調整
+    
     def draw(self):
+        # 表示上の位置を使って描画
         pygame.draw.circle(screen, self.color, 
                           (BOARD_X + self.x * PUYO_SIZE + PUYO_SIZE // 2, 
-                           BOARD_Y + self.y * PUYO_SIZE + PUYO_SIZE // 2), 
+                           BOARD_Y + self.visual_y * PUYO_SIZE + PUYO_SIZE // 2), 
                           PUYO_SIZE // 2 - 2)
         pygame.draw.circle(screen, WHITE, 
                           (BOARD_X + self.x * PUYO_SIZE + PUYO_SIZE // 2 - 5, 
-                           BOARD_Y + self.y * PUYO_SIZE + PUYO_SIZE // 2 - 5), 
+                           BOARD_Y + self.visual_y * PUYO_SIZE + PUYO_SIZE // 2 - 5), 
                           PUYO_SIZE // 8)
 
 # ぷよぷよのペアクラス
@@ -104,6 +112,12 @@ class PuyoPair:
         self.colors = [random.choice(PUYO_COLORS), random.choice(PUYO_COLORS)]
         self.puyo1 = Puyo(x, 0, self.colors[0])
         self.puyo2 = Puyo(x, 1, self.colors[1])
+        
+        # 初期状態では視覚的な位置を論理位置より上に設定（上から落ちてくる演出）
+        self.puyo1.visual_y = -1
+        self.puyo2.visual_y = 0
+        self.puyo1.target_y = 0
+        self.puyo2.target_y = 1
     
     def rotate(self, direction):
         # 1: 時計回り, -1: 反時計回り
@@ -121,6 +135,11 @@ class PuyoPair:
             rotate_sound.play()
             
         self.update_positions()
+        
+        # 回転後に視覚的な位置も即座に更新
+        self.puyo1.visual_y = self.puyo1.y
+        self.puyo2.visual_y = self.puyo2.y
+        
         return True
     
     def can_rotate(self):
@@ -169,6 +188,10 @@ class PuyoPair:
             self.puyo1.y = self.y
             self.puyo2.x = self.x - 1
             self.puyo2.y = self.y
+        
+        # ターゲット位置も更新
+        self.puyo1.target_y = self.puyo1.y
+        self.puyo2.target_y = self.puyo2.y
     
     def move(self, dx, dy):
         new_x = self.x + dx
@@ -178,6 +201,15 @@ class PuyoPair:
         if self.can_move(new_x, new_y):
             self.x = new_x
             self.y = new_y
+            
+            # 視覚的な位置も更新
+            if dy > 0:  # 下に移動する場合
+                self.puyo1.target_y = self.puyo1.y
+                self.puyo2.target_y = self.puyo2.y
+            else:  # それ以外の移動の場合は即座に視覚的位置も更新
+                self.puyo1.visual_y = self.puyo1.y
+                self.puyo2.visual_y = self.puyo2.y
+                
             self.update_positions()
             return True
         return False
@@ -215,9 +247,30 @@ class PuyoPair:
                 return False
         return True
 
+    def update(self, dt):
+        # ぷよの視覚的な位置を更新
+        self.puyo1.update(dt)
+        self.puyo2.update(dt)
+
     def draw(self):
-        self.puyo1.draw()
-        self.puyo2.draw()
+        # 視覚的な位置で描画
+        pygame.draw.circle(screen, self.puyo1.color, 
+                          (BOARD_X + self.puyo1.x * PUYO_SIZE + PUYO_SIZE // 2, 
+                           BOARD_Y + self.puyo1.visual_y * PUYO_SIZE + PUYO_SIZE // 2), 
+                          PUYO_SIZE // 2 - 2)
+        pygame.draw.circle(screen, WHITE, 
+                          (BOARD_X + self.puyo1.x * PUYO_SIZE + PUYO_SIZE // 2 - 5, 
+                           BOARD_Y + self.puyo1.visual_y * PUYO_SIZE + PUYO_SIZE // 2 - 5), 
+                          PUYO_SIZE // 8)
+        
+        pygame.draw.circle(screen, self.puyo2.color, 
+                          (BOARD_X + self.puyo2.x * PUYO_SIZE + PUYO_SIZE // 2, 
+                           BOARD_Y + self.puyo2.visual_y * PUYO_SIZE + PUYO_SIZE // 2), 
+                          PUYO_SIZE // 2 - 2)
+        pygame.draw.circle(screen, WHITE, 
+                          (BOARD_X + self.puyo2.x * PUYO_SIZE + PUYO_SIZE // 2 - 5, 
+                           BOARD_Y + self.puyo2.visual_y * PUYO_SIZE + PUYO_SIZE // 2 - 5), 
+                          PUYO_SIZE // 8)
 
 # ゲームクラス
 class PuyoGame:
@@ -239,8 +292,13 @@ class PuyoGame:
         self.last_rotation_time = 0
         self.rotation_delay = 0.25  # 回転の遅延（秒）
         self.pop_effects = []  # 消去エフェクト（星など）
-        self.effect_duration = 1.0  # エフェクトの持続時間（秒）
+        self.effect_duration = 1.5  # エフェクトの持続時間を1.5秒に延長
         self.puyo_pop_state = {}  # ぷよの消去状態を管理
+        self.flash_frequency = 8  # 点滅の頻度（1秒あたりの回数）
+        self.waiting_for_pop = False  # 消去アニメーション待機中
+        self.pop_wait_time = 0.0  # 待機時間
+        self.pop_wait_duration = 1.0  # 消去後の待機時間（秒）
+        self.fall_animation_in_progress = False  # 落下アニメーション中
     
     def create_new_pair(self):
         return PuyoPair(GRID_WIDTH // 2 - 1, self.grid)
@@ -248,9 +306,11 @@ class PuyoGame:
     def add_puyos_to_grid(self, puyo1, puyo2):
         if 0 <= puyo1.y < GRID_HEIGHT and 0 <= puyo1.x < GRID_WIDTH:
             self.grid[puyo1.y][puyo1.x] = puyo1
+            puyo1.target_y = puyo1.y
         if 0 <= puyo2.y < GRID_HEIGHT and 0 <= puyo2.x < GRID_WIDTH:
             self.grid[puyo2.y][puyo2.x] = puyo2
-            
+            puyo2.target_y = puyo2.y
+                
         # 横に置いた場合、下が空いていれば落とす処理
         self.handle_floating_puyos()
     
@@ -266,8 +326,10 @@ class PuyoGame:
                         # 下が空いている場合は落とす
                         self.grid[y + 1][x] = self.grid[y][x]
                         self.grid[y + 1][x].y = y + 1
+                        self.grid[y + 1][x].target_y = y + 1  # 目標位置を更新
                         self.grid[y][x] = None
                         puyo_dropped = True
+                        self.fall_animation_in_progress = True  # アニメーション中フラグをセット
     
     def check_game_over(self):
         # 上部の行に固定されたぷよがあるかチェック
@@ -276,12 +338,17 @@ class PuyoGame:
             
     def quick_drop(self):
         # ちぎり機能（一番下まで落とす）
-        if not self.falling_puyos and not self.game_over:
+        if not self.falling_puyos and not self.game_over and not self.fall_animation_in_progress:
             self.current_pair.drop_to_bottom()
             
             # ドロップ音を再生
             if has_sound:
                 drop_sound.play()
+                
+            # 落下アニメーションのための視覚的位置の更新
+            self.current_pair.puyo1.target_y = self.current_pair.puyo1.y
+            self.current_pair.puyo2.target_y = self.current_pair.puyo2.y
+            self.fall_animation_in_progress = True
                 
             # 固定する
             self.add_puyos_to_grid(self.current_pair.puyo1, self.current_pair.puyo2)
@@ -320,7 +387,7 @@ class PuyoGame:
             for group in groups:
                 total_cleared += len(group)
                 for puyo in group:
-                    # ぷよの消去状態を作成
+                    # ぷよの消去状態を作成（全連鎖共通のエフェクト）
                     puyo_key = f"{puyo.x},{puyo.y}"
                     self.puyo_pop_state[puyo_key] = {
                         "x": puyo.x,
@@ -330,19 +397,30 @@ class PuyoGame:
                         "scale": 1.0,
                         "chain": self.chain_count,
                         "original_puyo": puyo,
-                        "brightness": 0.0,  # 輝度（0.0〜1.0）
-                        "phase": 0.0  # アニメーションフェーズ
+                        "brightness": 0.0,
+                        "phase": 0.0
                     }
                     
-                    # エフェクトを作成
-                    self.pop_effects.append({
-                        "x": puyo.x,
-                        "y": puyo.y,
-                        "color": puyo.color,
-                        "time": self.effect_duration,
-                        "radius": PUYO_SIZE // 2,
-                        "chain": self.chain_count  # 連鎖数を保存
-                    })
+                    # 星形エフェクトは連鎖数に応じて - 星の数だけ変える
+                    if self.chain_count > 1:
+                        star_count = min(1 + (self.chain_count - 1) // 2, 5)  # 最大5個まで
+                        
+                        # 星エフェクトを追加
+                        for i in range(star_count):
+                            angle = (i * 360 / star_count) * 3.14159 / 180
+                            offset_x = math.cos(angle) * 0.5
+                            offset_y = math.sin(angle) * 0.5
+                            
+                            # 星エフェクトの保存
+                            self.pop_effects.append({
+                                "x": puyo.x + offset_x,
+                                "y": puyo.y + offset_y,
+                                "color": puyo.color,
+                                "time": self.effect_duration,
+                                "radius": PUYO_SIZE // 2,
+                                "chain": self.chain_count,
+                                "type": "star"
+                            })
                     
                     # グリッドから削除
                     self.grid[puyo.y][puyo.x] = None
@@ -361,8 +439,10 @@ class PuyoGame:
             score_formula = 10 * total_cleared * max(1, chain_power + group_bonus + connection_bonus)
             self.score += score_formula
             
-            # ぷよを落とす
-            self.falling_puyos = True
+            # 消去アニメーション待機状態に移行
+            self.waiting_for_pop = True
+            self.pop_wait_time = 0.0
+            
             return True
         else:
             self.chain_count = 0
@@ -385,14 +465,19 @@ class PuyoGame:
         return result
     
     def fall_puyos(self):
+        # 論理的な落下処理
         moved = False
         for y in range(GRID_HEIGHT - 2, -1, -1):
             for x in range(GRID_WIDTH):
                 if self.grid[y][x] is not None and self.grid[y + 1][x] is None:
+                    # 論理的な位置を更新
                     self.grid[y + 1][x] = self.grid[y][x]
                     self.grid[y + 1][x].y = y + 1
+                    self.grid[y + 1][x].target_y = y + 1  # 目標位置を設定
                     self.grid[y][x] = None
                     moved = True
+                    self.fall_animation_in_progress = True  # アニメーション中フラグをセット
+        
         return moved
     
     def play_chain_voice(self, chain_count):
@@ -406,7 +491,7 @@ class PuyoGame:
                 chain_sound.play()
     
     def handle_input(self, keys):
-        if self.falling_puyos or self.game_over:
+        if self.falling_puyos or self.game_over or self.waiting_for_pop or self.fall_animation_in_progress:
             return
         
         # キー入力の制限時間を設ける
@@ -417,7 +502,7 @@ class PuyoGame:
         # 回転に時間がかかるようにする
         if current_time - self.last_rotation_time < self.rotation_delay and (keys[K_UP] or keys[K_z] or keys[K_x]):
             return
-            
+                
         moved = False
         if keys[K_LEFT]:
             moved = self.current_pair.move(-1, 0)
@@ -440,14 +525,11 @@ class PuyoGame:
         elif keys[K_c]:  # Cキーでちぎり（強制落下）
             self.quick_drop()
             moved = True
-            
+                
         if moved:
             self.last_key_time = current_time
     
-    def update(self, dt):
-        if self.game_over:
-            return
-        
+    def update_animations(self, dt):
         # ぷよの消去アニメーション更新
         for key, pop_state in list(self.puyo_pop_state.items()):
             pop_state["time"] -= dt
@@ -456,18 +538,25 @@ class PuyoGame:
             progress = 1.0 - (pop_state["time"] / self.effect_duration)
             pop_state["phase"] = progress
             
-            # ぷよっと感を出すためのアニメーション（膨らんでから縮む）
-            if progress < 0.3:  # 最初の30%で膨らむ
-                pop_state["scale"] = 1.0 + (progress / 0.3) * 0.5  # 最大1.5倍まで膨らむ
-                # 明るくなっていく（0.0〜0.7）
-                pop_state["brightness"] = progress / 0.3 * 0.7
-            elif progress < 0.7:  # 30%〜70%は明るく輝く
-                pop_state["scale"] = 1.5 - ((progress - 0.3) / 0.4) * 0.5  # 1.5倍から1.0倍に
+            # 点滅のためのフラッシュ状態計算（sin波を使用）
+            flash_state = math.sin(progress * self.flash_frequency * math.pi * 2) * 0.5 + 0.5
+            
+            # 消去アニメーションのフェーズで挙動変更 - 連鎖数に関わらず同じ演出
+            if progress < 0.2:  # 最初の20%で膨らむ
+                pop_state["scale"] = 1.0 + (progress / 0.2) * 0.3  # 最大1.3倍まで膨らむ
+                # 点滅しながら明るくなる
+                pop_state["brightness"] = progress / 0.2 * 0.4 * (0.5 + flash_state * 0.5)
+            elif progress < 0.6:  # 20%〜60%は点滅しながら維持
+                pop_state["scale"] = 1.3 - ((progress - 0.2) / 0.4) * 0.1  # わずかに縮む
+                # 点滅する明るさ（0.4〜0.7）
+                pop_state["brightness"] = 0.4 + flash_state * 0.3
+            elif progress < 0.8:  # 60%〜80%は輝きながらゆっくり縮む
+                pop_state["scale"] = 1.2 - ((progress - 0.6) / 0.2) * 0.4  # 1.2倍から0.8倍に
                 # 完全に明るく（0.7〜1.0）
-                pop_state["brightness"] = 0.7 + (progress - 0.3) / 0.4 * 0.3
-            else:  # 残り30%で縮んでいく
-                pop_state["scale"] = 1.0 - ((progress - 0.7) / 0.3)  # 1.0倍から0倍に縮む
-                # 明るさ最大
+                pop_state["brightness"] = 0.7 + (progress - 0.6) / 0.2 * 0.3
+            else:  # 残り20%で一気に縮んでいく
+                pop_state["scale"] = 0.8 - ((progress - 0.8) / 0.2) * 0.8  # 0.8倍から0倍に縮む
+                # 最大明るさで消えていく
                 pop_state["brightness"] = 1.0
             
             if pop_state["time"] <= 0:
@@ -478,20 +567,48 @@ class PuyoGame:
             effect["time"] -= dt
             if effect["time"] <= 0:
                 self.pop_effects.remove(effect)
-            else:
-                # エフェクトサイズを時間経過で拡大
-                progress = 1.0 - (effect["time"] / self.effect_duration)
-                if progress < 0.7:  # 最初の70%で徐々に大きく
-                    effect["radius"] = PUYO_SIZE // 2 * (1 + progress * 2)
-                else:  # 残り30%で一気に拡大
-                    effect["radius"] = PUYO_SIZE // 2 * (1 + progress * 4)
         
+        # 全てのぷよの視覚的な位置を更新
+        all_puyos_at_target = True
+        for y in range(GRID_HEIGHT):
+            for x in range(GRID_WIDTH):
+                if self.grid[y][x] is not None:
+                    self.grid[y][x].update(dt)
+                    if self.grid[y][x].visual_y < self.grid[y][x].target_y:
+                        all_puyos_at_target = False
+        
+        # 落下アニメーションの終了判定
+        if self.fall_animation_in_progress and all_puyos_at_target:
+            self.fall_animation_in_progress = False
+    
+    def update(self, dt):
+        if self.game_over:
+            return
+        
+        # アニメーションの更新
+        self.update_animations(dt)
+        
+        # 消去アニメーション待機処理
+        if self.waiting_for_pop:
+            self.pop_wait_time += dt
+            self.pop_wait_time += dt
+            if self.pop_wait_time >= self.pop_wait_duration:
+                self.waiting_for_pop = False
+                self.pop_wait_time = 0
+                self.falling_puyos = True
+            return
+        
+        # 落下アニメーション中は他の操作を止める
+        if self.fall_animation_in_progress:
+            return
+        
+        # 通常の落下処理
         if self.falling_puyos:
             if not self.fall_puyos():
                 self.falling_puyos = False
                 # 落下が終わったら再度連鎖をチェック
                 if not self.check_matches():
-                    # 連鎖がなければ新しいぷよぺアを生成
+                    # 連鎖がなければ新しいぷよペアを生成
                     self.current_pair = self.next_pair
                     self.next_pair = self.create_new_pair()
                     self.check_game_over()
@@ -508,6 +625,123 @@ class PuyoGame:
                     self.current_pair = self.next_pair
                     self.next_pair = self.create_new_pair()
                     self.check_game_over()
+    
+    def draw_popping_puyos(self):
+        for key, pop_state in self.puyo_pop_state.items():
+            # 時間に基づいて透明度を計算
+            alpha = int(255 * (pop_state["time"] / self.effect_duration))
+            
+            # 進行度に基づいて点滅
+            progress = 1.0 - (pop_state["time"] / self.effect_duration)
+            flash_state = math.sin(progress * self.flash_frequency * math.pi * 2) * 0.5 + 0.5
+            
+            # 点滅効果を明るさに適用
+            flash_brightness = pop_state["brightness"] * (0.5 + flash_state * 0.5)
+            
+            # 元の色を取得
+            base_color = pop_state["color"][:3]
+            
+            # 明るさに基づいて色を変更（白に近づける）
+            color = tuple([min(255, int(c * (1 - flash_brightness) + 255 * flash_brightness)) for c in base_color])
+            color_with_alpha = (*color, alpha)
+            
+            # 現在のサイズを計算
+            current_radius = int(PUYO_SIZE // 2 * pop_state["scale"])
+            
+            # 点灯するぷよを描画
+            if current_radius > 0:
+                s = pygame.Surface((current_radius * 2, current_radius * 2), pygame.SRCALPHA)
+                pygame.draw.circle(s, color_with_alpha, (current_radius, current_radius), current_radius)
+                
+                # 白い光沢も拡大縮小に合わせる
+                highlight_radius = max(1, int(PUYO_SIZE // 8 * pop_state["scale"]))
+                highlight_offset = max(1, int(5 * pop_state["scale"]))
+                
+                # 点滅に合わせて光沢も変える
+                highlight_alpha = min(255, int(alpha * (0.7 + flash_state * 0.3)))
+                pygame.draw.circle(s, (255, 255, 255, highlight_alpha), 
+                                (current_radius - highlight_offset, current_radius - highlight_offset), 
+                                highlight_radius)
+                
+                # 連鎖数に応じた輝きエフェクト
+                chain = pop_state.get("chain", 1)
+                if chain > 1 and flash_brightness > 0.5:
+                    # 内側から外側に広がる輝きの輪
+                    glow_phases = [0.3, 0.6, 0.9]  # 複数の輝きの位相
+                    for glow_phase in glow_phases:
+                        # 位相に基づいてサイズを計算（膨張と収縮を繰り返す）
+                        phase_offset = (pop_state["phase"] * 3 + glow_phase) % 1.0
+                        glow_size = current_radius * (0.6 + phase_offset * 0.8)
+                        
+                        if glow_size > 0:
+                            # 連鎖数に応じた色
+                            if chain <= 3:
+                                glow_color = (255, 255, 100, int(alpha * 0.5 * (1 - phase_offset) * flash_state))
+                            elif chain <= 5:
+                                glow_color = (255, 100, 255, int(alpha * 0.5 * (1 - phase_offset) * flash_state))
+                            else:
+                                glow_color = (100, 255, 255, int(alpha * 0.5 * (1 - phase_offset) * flash_state))
+                                
+                            # 輝きの輪を描画
+                            pygame.draw.circle(s, glow_color, (current_radius, current_radius), 
+                                            glow_size, max(1, int(current_radius * 0.15)))
+                
+                # 画面に描画
+                x, y = pop_state["x"], pop_state["y"]
+                center_x = BOARD_X + x * PUYO_SIZE + PUYO_SIZE // 2
+                center_y = BOARD_Y + y * PUYO_SIZE + PUYO_SIZE // 2
+                screen.blit(s, (center_x - current_radius, center_y - current_radius))
+    
+    def draw_star_effects(self):
+        # 星形のエフェクトを描画
+        for effect in self.pop_effects:
+            if effect.get("type") == "star":
+                # 透明度を時間に基づいて変更
+                alpha = int(255 * effect["time"] / self.effect_duration)
+                
+                # 連鎖数を取得
+                chain = effect.get("chain", 1)
+                
+                # 星のサイズを計算
+                progress = 1.0 - (effect["time"] / self.effect_duration)
+                size_factor = 1.0
+                
+                # 時間経過で星のサイズも変更
+                if progress < 0.5:
+                    # 最初は大きくなる
+                    size_factor = 0.5 + progress * 1.0
+                else:
+                    # 後半は小さくなる
+                    size_factor = 1.5 - (progress - 0.5) * 1.0
+                
+                star_radius = effect["radius"] * size_factor * 0.6
+                
+                if star_radius > 0:
+                    s = pygame.Surface((star_radius * 2, star_radius * 2), pygame.SRCALPHA)
+                    
+                    # 星の色 - 連鎖数に応じて色を変える
+                    star_colors = [
+                        (255, 255, 0, alpha),  # 黄色
+                        (255, 0, 255, alpha),  # マゼンタ
+                        (0, 255, 255, alpha),  # シアン
+                        (255, 165, 0, alpha),  # オレンジ
+                    ]
+                    star_color = star_colors[(chain - 2) % len(star_colors)]
+                        
+                    # 星を描画
+                    points = []
+                    for j in range(8):
+                        point_angle = (j * 45 + 22.5) * 3.14159 / 180
+                        dist = star_radius if j % 2 == 0 else star_radius * 0.4
+                        points.append((
+                            star_radius + math.cos(point_angle) * dist,
+                            star_radius + math.sin(point_angle) * dist
+                        ))
+                    pygame.draw.polygon(s, star_color, points)
+                    
+                    x_pos = BOARD_X + effect["x"] * PUYO_SIZE + PUYO_SIZE // 2 - star_radius
+                    y_pos = BOARD_Y + effect["y"] * PUYO_SIZE + PUYO_SIZE // 2 - star_radius
+                    screen.blit(s, (x_pos, y_pos))
     
     def draw(self):
         # 背景を描画
@@ -526,111 +760,14 @@ class PuyoGame:
                 if self.grid[y][x] is not None:
                     self.grid[y][x].draw()
         
-        # 消去中のぷよを描画（点灯しながら消える）
-        for key, pop_state in self.puyo_pop_state.items():
-            # 時間に基づいて透明度を計算
-            alpha = int(255 * (pop_state["time"] / self.effect_duration))
-            
-            # 元の色を取得
-            base_color = pop_state["color"][:3]
-            
-            # 明るさに基づいて色を変更（白に近づける）
-            brightness = pop_state["brightness"]
-            color = tuple([min(255, int(c * (1 - brightness) + 255 * brightness)) for c in base_color])
-            color_with_alpha = (*color, alpha)
-            
-            # 現在のサイズを計算
-            current_radius = int(PUYO_SIZE // 2 * pop_state["scale"])
-            
-            # 点灯するぷよを描画
-            if current_radius > 0:
-                s = pygame.Surface((current_radius * 2, current_radius * 2), pygame.SRCALPHA)
-                pygame.draw.circle(s, color_with_alpha, (current_radius, current_radius), current_radius)
-                
-                # 白い光沢も拡大縮小に合わせる
-                highlight_radius = max(1, int(PUYO_SIZE // 8 * pop_state["scale"]))
-                highlight_offset = max(1, int(5 * pop_state["scale"]))
-                pygame.draw.circle(s, (255, 255, 255, alpha), 
-                                (current_radius - highlight_offset, current_radius - highlight_offset), 
-                                highlight_radius)
-                
-                # 連鎖数に応じた輝きエフェクト
-                chain = pop_state.get("chain", 1)
-                if chain > 1 and pop_state["brightness"] > 0.5:
-                    # 内側から外側に広がる輝きの輪
-                    glow_phases = [0.3, 0.6, 0.9]  # 複数の輝きの位相
-                    for glow_phase in glow_phases:
-                        # 位相に基づいてサイズを計算（膨張と収縮を繰り返す）
-                        phase_offset = (pop_state["phase"] * 3 + glow_phase) % 1.0
-                        glow_size = current_radius * (0.6 + phase_offset * 0.8)
-                        
-                        if glow_size > 0:
-                            # 連鎖数に応じた色
-                            if chain <= 3:
-                                glow_color = (255, 255, 100, int(alpha * 0.5 * (1 - phase_offset)))
-                            elif chain <= 5:
-                                glow_color = (255, 100, 255, int(alpha * 0.5 * (1 - phase_offset)))
-                            else:
-                                glow_color = (100, 255, 255, int(alpha * 0.5 * (1 - phase_offset)))
-                                
-                            # 輝きの輪を描画
-                            pygame.draw.circle(s, glow_color, (current_radius, current_radius), 
-                                            glow_size, max(1, int(current_radius * 0.15)))
-                
-                # 画面に描画
-                x, y = pop_state["x"], pop_state["y"]
-                center_x = BOARD_X + x * PUYO_SIZE + PUYO_SIZE // 2
-                center_y = BOARD_Y + y * PUYO_SIZE + PUYO_SIZE // 2
-                screen.blit(s, (center_x - current_radius, center_y - current_radius))
+        # 消去中のぷよを描画
+        self.draw_popping_puyos()
         
-        # エフェクトを描画
-        for effect in self.pop_effects:
-            # 透明度を時間に基づいて変更
-            alpha = int(255 * effect["time"] / self.effect_duration)
-            
-            # 連鎖数を取得（デフォルトは1）
-            chain = effect.get("chain", 1)
-            
-            # 星形のエフェクトを追加 - 連鎖数が高いほど多く、大きく
-            if effect["time"] > self.effect_duration * 0.5 and chain > 1:
-                s = pygame.Surface((effect["radius"] * 2, effect["radius"] * 2), pygame.SRCALPHA)
-                
-                star_count = 1 + (chain - 1) // 2  # 連鎖数に応じて星の数を増やす
-                for i in range(star_count):
-                    # 星の内部 - 連鎖数に応じて色を変える
-                    star_colors = [
-                        (255, 255, 0, alpha),  # 黄色
-                        (255, 0, 255, alpha),  # マゼンタ
-                        (0, 255, 255, alpha),  # シアン
-                        (255, 165, 0, alpha),  # オレンジ
-                    ]
-                    star_color = star_colors[(chain + i) % len(star_colors)]
-                        
-                    # 星のサイズと位置を計算
-                    # 星のサイズと位置を計算
-                    star_size = effect["radius"] * 0.6
-                    angle = (i * 360 / star_count) * 3.14159 / 180
-                    offset_x = math.cos(angle) * effect["radius"] * 0.5
-                    offset_y = math.sin(angle) * effect["radius"] * 0.5
-                    center_x = effect["radius"] + offset_x
-                    center_y = effect["radius"] + offset_y
-                    
-                    # 星を描画
-                    points = []
-                    for j in range(8):
-                        point_angle = (j * 45 + 22.5 * (i % 2)) * 3.14159 / 180
-                        dist = star_size if j % 2 == 0 else star_size * 0.4
-                        points.append((
-                            center_x + math.cos(point_angle) * dist,
-                            center_y + math.sin(point_angle) * dist
-                        ))
-                    pygame.draw.polygon(s, star_color, points)
-                
-                screen.blit(s, (BOARD_X + effect["x"] * PUYO_SIZE + PUYO_SIZE // 2 - effect["radius"], 
-                            BOARD_Y + effect["y"] * PUYO_SIZE + PUYO_SIZE // 2 - effect["radius"]))
+        # 星形エフェクトを描画（連鎖数に応じて）
+        self.draw_star_effects()
         
         # 現在のぷよペアを描画
-        if not self.falling_puyos and not self.game_over:
+        if not self.falling_puyos and not self.game_over and not self.waiting_for_pop:
             self.current_pair.draw()
         
         # 次のぷよペアを表示
@@ -705,6 +842,10 @@ def main():
         # 入力処理
         keys = pygame.key.get_pressed()
         game.handle_input(keys)
+        
+        # 操作中のペアのアニメーション更新
+        if not game.falling_puyos and not game.game_over and not game.waiting_for_pop:
+            game.current_pair.update(dt)
         
         # ゲーム状態の更新
         game.update(dt)
